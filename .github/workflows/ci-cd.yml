@@ -1,0 +1,66 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pytest -v
+
+  build-and-verify:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t health-checker:${{ github.sha }} .
+
+      - name: Run container
+        run: docker run -d --name hc -p 5000:5000 health-checker:${{ github.sha }}
+
+      - name: Wait for startup
+        run: sleep 5
+
+      - name: Health check (expected success)
+        run: ./scripts/health-check.sh http://localhost:5000/health 5 2
+
+      - name: Container logs
+        if: always()
+        run: docker logs hc
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f hc || true
+
+  failure-drill:
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t health-checker:fail .
+
+      - name: Run container in UNHEALTHY mode
+        run: docker run -d --name hc-fail -e HEALTHY=false -p 5001:5000 health-checker:fail
+
+      - name: Wait
+        run: sleep 5
+
+      - name: Health check (expected failure)
+        run: ./scripts/health-check.sh http://localhost:5001/health 3 1
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f hc-fail || true
