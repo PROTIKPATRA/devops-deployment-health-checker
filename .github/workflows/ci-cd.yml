@@ -45,7 +45,6 @@ jobs:
   failure-drill:
     needs: build-and-verify
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -53,13 +52,27 @@ jobs:
         run: docker build -t health-checker:fail .
 
       - name: Run container in UNHEALTHY mode
-        run: docker run -d --name hc-fail -e HEALTHY=false -p 5001:5000 health-checker:fail
+        run: docker run -d --name hc-fail -e HEALTHY=false -p 5051:5000 health-checker:fail
 
-      - name: Wait
+      - name: Wait for startup
         run: sleep 5
 
-      - name: Health check (expected failure)
-        run: ./scripts/health-check.sh http://localhost:5001/health 3 1
+      - name: Health check MUST fail (drill passes only if it does)
+        run: |
+          set +e
+          ./scripts/health-check.sh http://localhost:5051/health 3 1
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "❌ DRILL FAILED: unhealthy container reported healthy"
+            exit 1
+          else
+            echo "✅ DRILL PASSED: unhealthy container correctly detected (exit $RC)"
+          fi
+
+      - name: Container logs
+        if: always()
+        run: docker logs hc-fail
 
       - name: Cleanup
         if: always()
